@@ -1,12 +1,11 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, SlashCommandBuilder, Routes } = require('discord.js');
+const { REST } = require('@discordjs/rest');
 const cron = require('node-cron');
 const fs = require('fs');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
@@ -26,46 +25,91 @@ function saveData() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-client.on('messageCreate', async (msg) => {
-  if (!msg.content.startsWith('/') || msg.author.bot) return;
+const commands = [
+  new SlashCommandBuilder()
+    .setName('addstaff')
+    .setDescription('Add a staff member to the attendance list')
+    .addUserOption(option => 
+      option.setName('user')
+        .setDescription('The user to add')
+        .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('removestaff')
+    .setDescription('Remove a staff member from the attendance list')
+    .addUserOption(option => 
+      option.setName('user')
+        .setDescription('The user to remove')
+        .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('setattendancechannel')
+    .setDescription('Set the channel for daily attendance checks')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel to use (leave empty for current channel)')
+        .setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('setsummarychannel')
+    .setDescription('Set the channel for weekly summary reports')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel to use (leave empty for current channel)')
+        .setRequired(false)),
+].map(command => command.toJSON());
 
-  const args = msg.content.slice(1).split(' ');
-  const command = args.shift();
+client.once('ready', async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+  
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  
+  try {
+    console.log('Registering slash commands...');
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands },
+    );
+    console.log('✅ Slash commands registered!');
+  } catch (error) {
+    console.error('Error registering commands:', error);
+  }
+});
 
-  if (!msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    return msg.reply("❌ You don't have permission to use this command.");
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return interaction.reply({ content: "❌ You don't have permission to use this command.", ephemeral: true });
   }
 
-  if (command === 'addstaff') {
-    const user = msg.mentions.users.first();
-    if (!user) return msg.reply("❌ Please mention a user to add.");
+  if (interaction.commandName === 'addstaff') {
+    const user = interaction.options.getUser('user');
     if (!data.staff.includes(user.id)) {
       data.staff.push(user.id);
       saveData();
-      msg.reply(`✅ Added ${user.username} to the staff list.`);
-    } else msg.reply("⚠️ That user is already on the staff list.");
+      await interaction.reply(`✅ Added ${user.username} to the staff list.`);
+    } else {
+      await interaction.reply("⚠️ That user is already on the staff list.");
+    }
   }
 
-  if (command === 'removestaff') {
-    const user = msg.mentions.users.first();
-    if (!user) return msg.reply("❌ Please mention a user to remove.");
+  if (interaction.commandName === 'removestaff') {
+    const user = interaction.options.getUser('user');
     data.staff = data.staff.filter(id => id !== user.id);
     saveData();
-    msg.reply(`❌ Removed ${user.username} from the staff list.`);
+    await interaction.reply(`❌ Removed ${user.username} from the staff list.`);
   }
 
-  if (command === 'setattendancechannel') {
-    const channelId = args[0] || msg.channel.id;
-    data.attendanceChannelId = channelId;
+  if (interaction.commandName === 'setattendancechannel') {
+    const channel = interaction.options.getChannel('channel') || interaction.channel;
+    data.attendanceChannelId = channel.id;
     saveData();
-    msg.reply(`✅ Attendance channel set to <#${channelId}>`);
+    await interaction.reply(`✅ Attendance channel set to <#${channel.id}>`);
   }
 
-  if (command === 'setsummarychannel') {
-    const channelId = args[0] || msg.channel.id;
-    data.summaryChannelId = channelId;
+  if (interaction.commandName === 'setsummarychannel') {
+    const channel = interaction.options.getChannel('channel') || interaction.channel;
+    data.summaryChannelId = channel.id;
     saveData();
-    msg.reply(`✅ Summary channel set to <#${channelId}>`);
+    await interaction.reply(`✅ Summary channel set to <#${channel.id}>`);
   }
 });
 
@@ -130,10 +174,6 @@ cron.schedule('0 10 * * 0', async () => {
     .setTimestamp();
 
   await channel.send({ embeds: [embed] });
-});
-
-client.once('ready', () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
 client.login(TOKEN);
