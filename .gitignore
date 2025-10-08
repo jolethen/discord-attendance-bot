@@ -1,0 +1,5 @@
+node_modules/
+attendance.json
+.env
+npm-debug.log
+yarn-error.log
